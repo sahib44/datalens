@@ -1,0 +1,63 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: datalens
+      POSTGRES_PASSWORD: local-development-only
+      POSTGRES_DB: datalens
+    volumes:
+      - database:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U datalens"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  migrate:
+    build: ./backend
+    command: alembic upgrade head
+    environment: &backend-env
+      DATABASE_URL: postgresql+psycopg://datalens:local-development-only@db:5432/datalens
+      STORAGE_DIR: /data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+  api:
+    build: ./backend
+    environment: *backend-env
+    volumes:
+      - uploads:/data/uploads
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  worker:
+    build: ./backend
+    command: python -m app.worker
+    environment: *backend-env
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  frontend:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:5173:80"
+    depends_on:
+      - api
+  e2e:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.e2e
+    environment:
+      BASE_URL: http://frontend
+      CI: "true"
+    depends_on:
+      - frontend
+volumes:
+  database:
+  uploads:
